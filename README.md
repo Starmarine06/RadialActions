@@ -37,3 +37,7 @@ radialactions --autostart on|off|status
 ```
 
 Settings live in `%APPDATA%\RadialActions\config.txt`.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
