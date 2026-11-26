@@ -47,6 +47,7 @@ pub fn zip_path(src: &Path) -> Result<(PathBuf, usize)> {
         n += 1;
     }
 
+    crate::journal::created(&dst);
     let mut files = Vec::new();
     if src.is_dir() {
         files_under(src, &mut files).map_err(|e| e.to_string())?;
@@ -95,6 +96,7 @@ pub fn zip_many(paths: &[PathBuf]) -> Result<(PathBuf, usize)> {
         dst = parent.join(format!("{label} ({n}).zip"));
         n += 1;
     }
+    crate::journal::created(&dst);
 
     let result = (|| -> Result<usize> {
         let mut zip = zip::ZipWriter::new(File::create(&dst).map_err(|e| e.to_string())?);
@@ -155,6 +157,7 @@ fn extract_dir_for(src: &Path) -> PathBuf {
         dir = parent.join(format!("{stem} ({n})"));
         n += 1;
     }
+    crate::journal::created(&dir);
     dir
 }
 

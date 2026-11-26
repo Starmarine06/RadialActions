@@ -4,7 +4,9 @@
 //! a nested wheel. Adding a conversion is one `leaf(..)` entry below.
 
 use crate::archive;
+use crate::config::{self, Settings};
 use crate::convert::{self, ImgTarget};
+use crate::{custom, journal, transfer};
 use crate::sys;
 use crate::office::{self, Out};
 use crate::ooxml;
@@ -71,11 +73,26 @@ pub fn root_for(path: &Path) -> Vec<Node> {
 /// the header title, the history key, and the slices (with a leading "your usual"
 /// slice once the user has run something on this kind of item before).
 pub fn wheel_for(paths: &[PathBuf]) -> (String, String, Vec<Node>) {
+    wheel_with(paths, &config::load())
+}
+
+pub fn wheel_with(paths: &[PathBuf], settings: &Settings) -> (String, String, Vec<Node>) {
     let (title, key, mut nodes) = if paths.len() == 1 {
         (name_of(&paths[0]), type_key(&paths[0]), build_root(&paths[0]))
     } else {
         multi_root(paths)
     };
+    if settings.send {
+        let at = more_position(&nodes);
+        nodes.insert(at, send_group(paths, settings));
+    }
+    if let Some(mine) = custom_group(paths, settings) {
+        let at = more_position(&nodes);
+        nodes.insert(at, mine);
+    }
+    if let Some(layout) = settings.wheels.get(category(paths)) {
+        apply_layout(&mut nodes, layout);
+    }
     assign_ids(&mut nodes, "");
     if let Some(id) = recent::top(&key) {
         if let Some((label, tip, runner, is_slow)) = find_leaf(&nodes, &id) {
@@ -92,6 +109,162 @@ pub fn wheel_for(paths: &[PathBuf]) -> (String, String, Vec<Node>) {
         }
     }
     (title, key, nodes)
+}
+
+fn more_position(nodes: &[Node]) -> usize {
+    nodes.iter().position(|n| n.label == "More").unwrap_or(nodes.len())
+}
+
+/// Reorders and hides top-level slices as the user chose. Slices the layout
+/// doesn't mention keep their usual order after the listed ones.
+fn apply_layout(nodes: &mut Vec<Node>, layout: &config::Layout) {
+    nodes.retain(|n| !layout.hidden.contains(&n.label));
+    nodes.sort_by_key(|n| layout.order.iter().position(|l| *l == n.label).unwrap_or(usize::MAX));
+}
+
+/// Which wheel layout applies to this selection.
+pub fn category(paths: &[PathBuf]) -> &'static str {
+    let [path] = paths else { return "many" };
+    let ext = ext_of(path);
+    if path.is_dir() {
+        "folder"
+    } else if convert::is_image(path) {
+        "image"
+    } else if archive::is_zip(path) || archive::is_tar_gz(path) {
+        "archive"
+    } else if Data::from_ext(&ext).is_some() {
+        "data"
+    } else if let Some(app) = office::app_for(&ext) {
+        match app {
+            office::App::Word => "word",
+            office::App::Excel => "excel",
+            office::App::PowerPoint => "powerpoint",
+        }
+    } else {
+        match ext.as_str() {
+            "pdf" => "pdf",
+            "md" | "markdown" | "html" | "htm" => "web",
+            "txt" | "log" | "ini" | "cfg" | "xml" | "css" | "js" | "rs" | "py" | "ts" => "text",
+            _ => "other",
+        }
+    }
+}
+
+/// Every category with the slices it can show, for the settings window.
+pub fn catalogue() -> Vec<(&'static str, &'static str, Vec<String>)> {
+    let samples: [(&str, &str, &[&str]); 12] = [
+        ("image", "Images", &["a.png"]),
+        ("pdf", "PDF files", &["a.pdf"]),
+        ("word", "Word documents", &["a.docx"]),
+        ("excel", "Excel sheets", &["a.xlsx"]),
+        ("powerpoint", "Presentations", &["a.pptx"]),
+        ("data", "JSON, YAML, TOML, CSV", &["a.json", "a.csv"]),
+        ("web", "Markdown and HTML", &["a.md"]),
+        ("text", "Text and code", &["a.txt"]),
+        ("archive", "Archives", &["a.zip", "a.tar.gz"]),
+        ("folder", "Folders", &[]),
+        ("other", "Other files", &["a.unknown"]),
+        ("many", "Several files", &[]),
+    ];
+    samples
+        .into_iter()
+        .map(|(key, title, files)| {
+            let roots: Vec<Vec<Node>> = match key {
+                "folder" => vec![build_root(&std::env::temp_dir())],
+                "many" => vec![
+                    multi_root(&[PathBuf::from("a.pdf"), PathBuf::from("b.pdf")]).2,
+                    multi_root(&[PathBuf::from("a.png"), PathBuf::from("b.jpg")]).2,
+                ],
+                _ => files.iter().map(|f| build_root(Path::new(f))).collect(),
+            };
+            let mut labels: Vec<String> = Vec::new();
+            for node in roots.into_iter().flatten() {
+                if !labels.contains(&node.label) {
+                    labels.push(node.label);
+                }
+            }
+            let at = labels.iter().position(|l| l == "More").unwrap_or(labels.len());
+            labels.insert(at, "Send".into());
+            (key, title, labels)
+        })
+        .collect()
+}
+
+fn short(label: &str) -> String {
+    if label.chars().count() <= 11 {
+        label.to_string()
+    } else {
+        format!("{}\u{2026}", label.chars().take(10).collect::<String>())
+    }
+}
+
+/// Destination slices for "Move to" or "Copy to".
+fn destination_nodes(paths: &Arc<Vec<PathBuf>>, settings: &Settings, copy: bool) -> Vec<Node> {
+    let verb = if copy { "Copy" } else { "Move" };
+    let act = move |paths: &[PathBuf], dir: &Path| {
+        if copy {
+            transfer::copy_into(paths, dir)
+        } else {
+            transfer::move_into(paths, dir)
+        }
+    };
+    let mut nodes: Vec<Node> = transfer::destinations(settings)
+        .into_iter()
+        .map(|dir| {
+            let paths = paths.clone();
+            let label = short(&name_of(&dir));
+            slow(leaf(&label, &format!("{verb} to {}", dir.display()), move |_| act(&paths, &dir)))
+        })
+        .collect();
+    let paths = paths.clone();
+    nodes.push(leaf("Choose\u{2026}", &format!("{verb} to another folder"), move |_| {
+        let Some(dir) = transfer::pick_folder()? else { return Ok(String::new()) };
+        let done = act(&paths, &dir)?;
+        transfer::remember(&dir);
+        Ok(done)
+    }));
+    nodes
+}
+
+fn send_group(paths: &[PathBuf], settings: &Settings) -> Node {
+    let shared = Arc::new(paths.to_vec());
+    let for_rename = shared.clone();
+    group(
+        "Send",
+        "Move, copy or rename",
+        vec![
+            group("Move to", "Move to a folder", destination_nodes(&shared, settings, false)),
+            group("Copy to", "Copy to a folder", destination_nodes(&shared, settings, true)),
+            leaf("Rename", "Rename with preview", move |_| {
+                crate::ui::open_rename(&for_rename).map(|_| String::new())
+            }),
+        ],
+    )
+}
+
+fn custom_group(paths: &[PathBuf], settings: &Settings) -> Option<Node> {
+    let shared = Arc::new(paths.to_vec());
+    let nodes: Vec<Node> = settings
+        .custom
+        .iter()
+        .filter(|c| paths.iter().all(|p| custom::matches(c, p)))
+        .take(8)
+        .map(|c| {
+            let (c, paths) = (c.clone(), shared.clone());
+            leaf(&short(&c.name), &c.name.clone(), move |_| custom::run(&c, &paths))
+        })
+        .collect();
+    (!nodes.is_empty()).then(|| group("Mine", "Your own actions", nodes))
+}
+
+/// Runs an action, remembering what it changed so it can be undone. A panic in
+/// a parser (damaged files happen) becomes an error instead of closing the app.
+pub fn execute(runner: &Runner, path: &Path, label: &str) -> (Result<String, String>, bool) {
+    journal::begin();
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| runner(path)))
+        .unwrap_or_else(|_| Err(format!("{} can't be processed (is it damaged?)", name_of(path))));
+    let undoable = journal::commit(label);
+    (result, undoable)
 }
 
 /// Wheel for a multi-file selection, without usage history.
@@ -129,8 +302,12 @@ fn multi_root(paths: &[PathBuf]) -> (String, String, Vec<Node>) {
         });
         nodes.push(if needs_app { slow(node) } else { node });
     }
-    if same {
-        let mut each = build_root(&sorted[0]);
+    // JPGs and PNGs selected together are still all pictures.
+    let all_images = sorted.iter().all(|p| convert::is_image(p) && !p.is_dir());
+    if same || all_images {
+        // A name with no extension offers every target format.
+        let sample = if same { sorted[0].clone() } else { PathBuf::from("pictures") };
+        let mut each = if same { build_root(&sample) } else { image_root(&sample) };
         each.retain(|node| node.label != "More");
         if !each.is_empty() {
             nodes.push(group("Each", "Run on every selected file", batch(each, shared.clone())));
@@ -146,7 +323,13 @@ fn multi_root(paths: &[PathBuf]) -> (String, String, Vec<Node>) {
         sys::copy_text(&text.join("\r\n")).map(|_| format!("{} paths copied", s.len()))
     }));
 
-    let key = if same { format!("many:{}", keys[0]) } else { "many:mixed".to_string() };
+    let key = if same {
+        format!("many:{}", keys[0])
+    } else if all_images {
+        "many:image".to_string()
+    } else {
+        "many:mixed".to_string()
+    };
     (format!("{n} files selected"), key, nodes)
 }
 
@@ -227,7 +410,7 @@ pub fn run_by_id(path: &Path, id: &str) -> Result<String, String> {
 
 /// Runs the action at `id` on several files at once. Used by `--run`.
 pub fn run_by_id_many(paths: &[PathBuf], id: &str) -> Result<String, String> {
-    let nodes = wheel_for(paths).2;
+    let nodes = wheel_with(paths, &Settings::default()).2;
     let (_, _, runner, _) = find_leaf(&nodes, id).ok_or_else(|| format!("no action '{id}' for this selection"))?;
     runner(&paths[0])
 }
@@ -254,6 +437,7 @@ fn build_root(path: &Path) -> Vec<Node> {
         // Zip is the likely intent for a folder, so it takes the top slice.
         let mut v = universal();
         v.rotate_right(1);
+        v.retain(|n| n.label != "SHA-256");
         return v;
     }
     if convert::is_image(path) {
@@ -637,6 +821,13 @@ mod tests {
         assert!(n.iter().all(|c| c.label != "Each"), "mixed types have no shared Each");
         let imgs = root_for_many(&many(&["a.png", "b.jpg"]));
         assert!(!imgs.iter().find(|c| c.label == "To PDF").unwrap().slow);
+    }
+
+    #[test]
+    fn mixed_picture_formats_still_get_each() {
+        let n = root_for_many(&many(&["a.png", "b.jpg"]));
+        assert!(find_leaf(&n, "Each/Convert/WEBP").is_some() && find_leaf(&n, "Each/Convert/JPG").is_some());
+        assert!(find_leaf(&n, "Each/Resize/50%").is_some() && find_leaf(&n, "Each/More/Zip").is_none());
     }
 
     #[test]

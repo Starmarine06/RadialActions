@@ -2,8 +2,9 @@
 //! straight into a premultiplied BGRA bitmap, with GDI used only to rasterise
 //! text into a coverage mask.
 
+use crate::theme::Palette;
 use std::f32::consts::{FRAC_PI_2, TAU};
-use windows::core::w;
+use windows::core::PCWSTR;
 use windows::Win32::Foundation::{COLORREF, SIZE};
 use windows::Win32::Graphics::Gdi::*;
 
@@ -83,6 +84,47 @@ pub struct Text {
 
 impl Text {
     pub fn new(px: i32, weight: i32) -> Self {
+        Self::with_face(px, weight, "Segoe UI")
+    }
+
+    /// The Windows icon font: Fluent on 11, MDL2 on 10 (same code points).
+    pub fn icons(px: i32) -> Self {
+        let fluent = Self::with_face(px, 400, "Segoe Fluent Icons");
+        if fluent.face() == "Segoe Fluent Icons" {
+            fluent
+        } else {
+            Self::with_face(px, 400, "Segoe MDL2 Assets")
+        }
+    }
+
+    fn face(&self) -> String {
+        let mut buf = [0u16; 64];
+        let n = unsafe { GetTextFaceW(self.dc, Some(&mut buf)) } as usize;
+        String::from_utf16_lossy(&buf[..n.saturating_sub(1)])
+    }
+
+    /// Like `mask`, shortened with an ellipsis until it is at most `max` wide.
+    pub fn fit(&self, text: &str, max: i32) -> Mask {
+        let full = self.mask(text);
+        if full.w <= max {
+            return full;
+        }
+        let chars: Vec<char> = text.chars().collect();
+        // Trim from the middle so a file's extension stays readable.
+        let (mut lo, mut hi) = (1usize, chars.len().saturating_sub(1).max(1));
+        while lo < hi {
+            let keep = (lo + hi).div_ceil(2);
+            if self.mask(&middle(&chars, keep)).w <= max {
+                lo = keep;
+            } else {
+                hi = keep - 1;
+            }
+        }
+        self.mask(&middle(&chars, lo))
+    }
+
+    pub fn with_face(px: i32, weight: i32, face: &str) -> Self {
+        let face: Vec<u16> = face.encode_utf16().chain(std::iter::once(0)).collect();
         unsafe {
             let dc = CreateCompatibleDC(None);
             let font = CreateFontW(
@@ -99,7 +141,7 @@ impl Text {
                 CLIP_DEFAULT_PRECIS,
                 ANTIALIASED_QUALITY,
                 0,
-                w!("Segoe UI"),
+                PCWSTR(face.as_ptr()),
             );
             let old = SelectObject(dc, font.into());
             SetBkMode(dc, TRANSPARENT);
@@ -143,13 +185,18 @@ impl Drop for Text {
     }
 }
 
+fn middle(chars: &[char], keep: usize) -> String {
+    let head = keep.div_ceil(2);
+    let mut out: String = chars[..head].iter().collect();
+    out.push('\u{2026}');
+    out.extend(&chars[chars.len() - (keep - head)..]);
+    out
+}
+
 pub type Rgb = (f32, f32, f32);
 
-pub const BASE: Rgb = (40.0, 43.0, 58.0);
-pub const ACCENT: Rgb = (88.0, 101.0, 242.0);
-pub const OK: Rgb = (30.0, 120.0, 80.0);
-pub const FAIL: Rgb = (160.0, 48.0, 56.0);
-pub const INFO: Rgb = (52.0, 74.0, 128.0);
+pub const OK: Rgb = (46.0, 190.0, 120.0);
+pub const FAIL: Rgb = (232.0, 80.0, 90.0);
 pub const WHITE: Rgb = (255.0, 255.0, 255.0);
 
 /// Source-over of a straight-alpha colour onto a premultiplied pixel.
@@ -203,47 +250,92 @@ fn blit(px: &mut [u32], w: i32, h: i32, m: &Mask, cx: f32, cy: f32, color: Rgb, 
     }
 }
 
-/// Rounded rectangle with a text label centred in it.
-pub fn pill(px: &mut [u32], w: i32, h: i32, rect: (f32, f32, f32, f32), fill: Rgb, label: &Mask) {
-    let (x0, y0, pw, ph) = rect;
-    let (hx, hy) = (pw / 2.0, ph / 2.0);
-    let rad = hy;
-    let (mx, my) = (x0 + hx, y0 + hy);
-    for y in (y0.floor() as i32).max(0)..((y0 + ph).ceil() as i32).min(h) {
-        for x in (x0.floor() as i32).max(0)..((x0 + pw).ceil() as i32).min(w) {
-            let (qx, qy) = ((x as f32 + 0.5 - mx).abs() - (hx - rad), (y as f32 + 0.5 - my).abs() - (hy - rad));
-            let dist = qx.max(0.0).hypot(qy.max(0.0)) + qx.max(qy).min(0.0) - rad;
-            over(&mut px[(y * w + x) as usize], fill, (0.5 - dist).clamp(0.0, 1.0) * 0.97);
-        }
-    }
-    blit(px, w, h, label, mx, my, WHITE, 1.0);
+/// Signed distance to a rounded rectangle, negative inside.
+fn rounded(x: f32, y: f32, (x0, y0, w, h): (f32, f32, f32, f32), rad: f32) -> f32 {
+    let (hx, hy) = (w / 2.0, h / 2.0);
+    let (qx, qy) = ((x - x0 - hx).abs() - (hx - rad), (y - y0 - hy).abs() - (hy - rad));
+    qx.max(0.0).hypot(qy.max(0.0)) + qx.max(qy).min(0.0) - rad
 }
 
-/// Draws the ring of slices, their labels and the header pill.
-pub fn draw_wheel(
-    px: &mut [u32],
-    w: i32,
-    h: i32,
-    g: &Geom,
-    scale: f32,
-    hover: Option<usize>,
-    labels: &[Mask],
-    header: &Mask,
-) {
+/// A filled capsule with an optional thin outline.
+pub fn capsule(px: &mut [u32], w: i32, h: i32, rect: (f32, f32, f32, f32), fill: Rgb, rim: Option<(Rgb, f32)>) {
+    let (x0, y0, pw, ph) = rect;
+    for y in (y0.floor() as i32).max(0)..((y0 + ph).ceil() as i32).min(h) {
+        for x in (x0.floor() as i32).max(0)..((x0 + pw).ceil() as i32).min(w) {
+            let dist = rounded(x as f32 + 0.5, y as f32 + 0.5, rect, ph / 2.0);
+            let cov = (0.5 - dist).clamp(0.0, 1.0);
+            let dst = &mut px[(y * w + x) as usize];
+            over(dst, fill, cov * 0.98);
+            if let Some((color, alpha)) = rim {
+                let edge = (1.6 + dist).clamp(0.0, 1.0);
+                over(dst, color, cov * edge * alpha);
+            }
+        }
+    }
+}
+
+/// Text centred on (cx, cy).
+pub fn text(px: &mut [u32], w: i32, h: i32, m: &Mask, cx: f32, cy: f32, color: Rgb) {
+    blit(px, w, h, m, cx, cy, color, 1.0);
+}
+
+/// What one slice shows.
+pub struct Slice {
+    pub icon: Mask,
+    pub label: Mask,
+}
+
+pub struct Ring<'a> {
+    pub geom: Geom,
+    pub scale: f32,
+    pub palette: &'a Palette,
+    pub hover: Option<usize>,
+    pub center_hover: bool,
+    pub slices: &'a [Slice],
+    /// Glyph in the middle: close, or back inside a group.
+    pub center: &'a Mask,
+    pub header: &'a Mask,
+}
+
+/// Draws the ring of slices, the centre button and the header pill.
+pub fn draw_wheel(px: &mut [u32], w: i32, h: i32, ring: &Ring) {
     px.fill(0);
-    let n = labels.len();
+    let g = &ring.geom;
+    let (scale, p) = (ring.scale, ring.palette);
+    let n = ring.slices.len();
     if n == 0 {
         return;
     }
     let sector = TAU / n as f32;
     let gap_half = 1.5 * scale;
+    let halo_w = 9.0 * scale;
+    let center_r = g.r_in - 6.0 * scale;
 
-    let (x_lo, x_hi) = ((g.cx - g.r_out - 2.0).max(0.0) as i32, ((g.cx + g.r_out + 2.0) as i32).min(w));
-    let (y_lo, y_hi) = ((g.cy - g.r_out - 2.0).max(0.0) as i32, ((g.cy + g.r_out + 2.0) as i32).min(h));
+    let reach = g.r_out + halo_w + 2.0;
+    let (x_lo, x_hi) = ((g.cx - reach).max(0.0) as i32, ((g.cx + reach) as i32).min(w));
+    let (y_lo, y_hi) = ((g.cy - reach).max(0.0) as i32, ((g.cy + reach) as i32).min(h));
     for y in y_lo..y_hi {
         for x in x_lo..x_hi {
             let (dx, dy) = (x as f32 + 0.5 - g.cx, y as f32 + 0.5 - g.cy);
             let r = dx.hypot(dy);
+            let dst = &mut px[(y * w + x) as usize];
+
+            // Halo first, so the ring covers its inner edge.
+            if r > g.r_out - 1.0 && r < g.r_out + halo_w {
+                let fade = 1.0 - ((r - g.r_out) / halo_w).clamp(0.0, 1.0);
+                over(dst, p.halo, fade * fade * p.halo_alpha);
+            }
+
+            // Centre button.
+            let disc = (center_r - r + 0.5).clamp(0.0, 1.0);
+            if disc > 0.0 {
+                let color = if ring.center_hover { p.hover } else { p.base };
+                over(dst, color, disc * 0.97);
+                let edge = (1.4 * scale - (center_r - r)).clamp(0.0, 1.0);
+                over(dst, p.rim, disc * edge * p.rim_alpha);
+                continue;
+            }
+
             let radial = (r - g.r_in + 0.5).clamp(0.0, 1.0) * (g.r_out - r + 0.5).clamp(0.0, 1.0);
             if radial <= 0.0 {
                 continue;
@@ -257,24 +349,35 @@ pub fn draw_wheel(
                 f32::MAX
             };
             let cov = radial * (edge - gap_half + 0.5).clamp(0.0, 1.0);
-            let (color, alpha) = if hover == Some(idx) { (ACCENT, 0.98) } else { (BASE, 0.97) };
-            let dst = &mut px[(y * w + x) as usize];
-            over(dst, color, cov * alpha);
-            // Thin light rim on the inner and outer edges keeps the ring readable on dark windows.
-            let rim = ((1.3 * scale - (r - g.r_in)).min(1.3 * scale - (g.r_out - r)) / scale).clamp(0.0, 1.0);
-            over(dst, WHITE, cov * rim * 0.28);
+            let hot = ring.hover == Some(idx);
+            over(dst, if hot { p.hover } else { p.base }, cov * 0.97);
+            // A rim keeps the ring readable on any window; neon outlines each slice.
+            let mut rim = ((1.3 * scale - (r - g.r_in)).max(1.3 * scale - (g.r_out - r)) / scale).clamp(0.0, 1.0);
+            if p.glow {
+                rim = rim.max((1.2 * scale - (edge - gap_half)).clamp(0.0, 1.0));
+            }
+            over(dst, p.rim, cov * rim * p.rim_alpha);
         }
     }
 
     let mid = (g.r_in + g.r_out) / 2.0;
-    for (i, label) in labels.iter().enumerate() {
+    for (i, slice) in ring.slices.iter().enumerate() {
         let ang = -FRAC_PI_2 + i as f32 * sector;
-        blit(px, w, h, label, g.cx + mid * ang.cos(), g.cy + mid * ang.sin(), WHITE, 1.0);
+        let (cx, cy) = (g.cx + mid * ang.cos(), g.cy + mid * ang.sin());
+        let color = if ring.hover == Some(i) { p.hover_text } else { p.text };
+        blit(px, w, h, &slice.icon, cx, cy - 9.0 * scale, color, 1.0);
+        blit(px, w, h, &slice.label, cx, cy + 11.0 * scale, color, 1.0);
     }
 
+    let color = if ring.center_hover { p.hover_text } else { p.text };
+    blit(px, w, h, ring.center, g.cx, g.cy, color, 1.0);
+
+    let header = ring.header;
     if header.w > 0 {
         let (pw, ph) = (header.w as f32 + 26.0 * scale, header.h as f32 + 10.0 * scale);
-        pill(px, w, h, ((w as f32 - pw) / 2.0, 4.0 * scale, pw, ph), BASE, header);
+        let rect = ((w as f32 - pw) / 2.0, 4.0 * scale, pw, ph);
+        capsule(px, w, h, rect, p.base, Some((p.rim, p.rim_alpha)));
+        blit(px, w, h, header, rect.0 + pw / 2.0, rect.1 + ph / 2.0, p.text, 1.0);
     }
 }
 
@@ -296,7 +399,7 @@ pub fn draw_icon(px: &mut [u32], size: i32) {
             let idx = ((a / sector) as usize).min(5);
             let into = a - idx as f32 * sector;
             let cov = radial * (into.min(sector - into) * r - s * 0.03 + 0.5).clamp(0.0, 1.0);
-            let color = if idx == 0 { WHITE } else { ACCENT };
+            let color = if idx == 0 { WHITE } else { (47.0, 129.0, 247.0) };
             over(&mut px[(y * size + x) as usize], color, cov);
         }
     }

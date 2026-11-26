@@ -27,6 +27,14 @@ pub fn app_for(ext: &str) -> Option<App> {
     }
 }
 
+/// A fresh temp path, unique even while several actions run at once.
+fn scratch(tag: &str) -> PathBuf {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static NEXT: AtomicU32 = AtomicU32::new(0);
+    let n = NEXT.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!("radialactions_{tag}_{}_{n}", std::process::id()))
+}
+
 /// Runs `cmd` to completion or kills it after `limit`, returning stderr on failure.
 fn run_limited(mut cmd: Command, limit: Duration) -> Result<()> {
     use std::os::windows::process::CommandExt;
@@ -208,7 +216,7 @@ fn render_html(src: &Path) -> Result<String> {
 /// Renders the file to HTML in-process and prints it to `dst` with headless Edge.
 fn native_pdf_to(src: &Path, dst: &Path) -> Result<()> {
     let html = render_html(src)?;
-    let tmp = std::env::temp_dir().join(format!("radialactions_native_{}_{}", std::process::id(), src.file_stem().and_then(|s| s.to_str()).unwrap_or("x").len()));
+    let tmp = scratch("native");
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
     let page = tmp.join("page.html");
@@ -225,7 +233,7 @@ pub fn native_pdf(src: &Path) -> Result<PathBuf> {
 
 /// One PNG per slide, without PowerPoint: print to a scratch PDF, then render its pages.
 pub fn native_slides(src: &Path) -> Result<(PathBuf, usize)> {
-    let tmp = std::env::temp_dir().join(format!("radialactions_slides_{}", std::process::id()));
+    let tmp = scratch("slides");
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
     let pdf = tmp.join("slides.pdf");
@@ -267,6 +275,7 @@ pub fn convert(src: &Path, out: Out) -> Result<PathBuf> {
             d = parent.join(format!("{stem} slides ({n})"));
             n += 1;
         }
+        crate::journal::created(&d);
         d
     } else {
         unique_sibling(src, "", out.ext())
@@ -308,7 +317,7 @@ fn app_name(a: App) -> &'static str {
 }
 
 fn libreoffice(exe: &Path, src: &Path, dst: &Path) -> Result<()> {
-    let out = std::env::temp_dir().join(format!("radialactions_lo_{}", std::process::id()));
+    let out = scratch("lo");
     std::fs::create_dir_all(&out).map_err(|e| e.to_string())?;
     let mut cmd = Command::new(exe);
     cmd.args(["--headless", "--convert-to", "pdf", "--outdir"]).arg(&out).arg(src);
@@ -342,7 +351,7 @@ pub fn html_to_pdf(src: &Path) -> Result<PathBuf> {
 fn print_with_edge(html: &Path, dst: &Path) -> Result<()> {
     let exe = edge().ok_or("Microsoft Edge not found")?;
     // A throwaway profile, otherwise a running Edge swallows the command.
-    let profile = std::env::temp_dir().join(format!("radialactions_edge_{}", std::process::id()));
+    let profile = scratch("edge");
     let mut cmd = Command::new(exe);
     cmd.args(["--headless=new", "--disable-gpu", "--no-pdf-header-footer", "--no-first-run"])
         .arg(format!("--user-data-dir={}", profile.display()))
@@ -366,7 +375,7 @@ pub fn markdown_to_pdf(src: &Path) -> Result<PathBuf> {
     if edge().is_none() {
         return crate::textconv::text_to_pdf(src);
     }
-    let tmp = std::env::temp_dir().join(format!("radialactions_md_{}", std::process::id()));
+    let tmp = scratch("md");
     std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
     let staged = tmp.join(src.file_name().unwrap_or_default());
     std::fs::copy(src, &staged).map_err(|e| e.to_string())?;

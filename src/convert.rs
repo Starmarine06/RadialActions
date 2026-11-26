@@ -1,4 +1,5 @@
-use image::{DynamicImage, ImageFormat, ImageReader};
+use image::metadata::Orientation;
+use image::{DynamicImage, ImageDecoder, ImageFormat, ImageReader};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -65,16 +66,31 @@ pub fn unique_sibling(src: &Path, suffix: &str, ext: &str) -> PathBuf {
         out = dir.join(format!("{stem}{suffix} ({n}).{ext}"));
         n += 1;
     }
+    crate::journal::created(&out);
     out
 }
 
+/// Decodes with the camera's EXIF rotation applied, so results aren't sideways.
 fn load(src: &Path) -> Result<DynamicImage> {
-    ImageReader::open(src)
+    let mut decoder = ImageReader::open(src)
         .map_err(|e| e.to_string())?
         .with_guessed_format()
         .map_err(|e| e.to_string())?
-        .decode()
-        .map_err(|e| e.to_string())
+        .into_decoder()
+        .map_err(|e| e.to_string())?;
+    let orientation = decoder.orientation().unwrap_or(Orientation::NoTransforms);
+    let mut img = DynamicImage::from_decoder(decoder).map_err(|e| e.to_string())?;
+    img.apply_orientation(orientation);
+    Ok(img)
+}
+
+fn is_upright(src: &Path) -> bool {
+    ImageReader::open(src)
+        .ok()
+        .and_then(|r| r.with_guessed_format().ok())
+        .and_then(|r| r.into_decoder().ok())
+        .and_then(|mut d| d.orientation().ok())
+        .is_none_or(|o| o == Orientation::NoTransforms)
 }
 
 fn save(img: &DynamicImage, dst: &Path, fmt: ImageFormat) -> Result<()> {
@@ -182,7 +198,8 @@ pub fn image_to_pdf(src: &Path) -> Result<PathBuf> {
         let img = load(src)?;
         let colors = img.color().channel_count();
         // CMYK/gray-with-alpha JPEGs are rare; re-encode anything but RGB or gray.
-        if colors == 3 || colors == 1 {
+        // A rotated photo has to be re-encoded: PDF ignores the EXIF tag.
+        if (colors == 3 || colors == 1) && is_upright(src) {
             (img.width(), img.height(), "/DCTDecode", bytes)
         } else {
             raw_rgb(&img)?
@@ -195,7 +212,10 @@ pub fn image_to_pdf(src: &Path) -> Result<PathBuf> {
     let cs = if gray { "/DeviceGray" } else { "/DeviceRGB" };
 
     let dst = unique_sibling(src, "", "pdf");
-    let content = format!("q {w} 0 0 {h} 0 0 cm /Im0 Do Q");
+    // Pixels stay untouched; only the page is capped at A4's long edge (842 pt).
+    let fit = (842.0 / w.max(h) as f32).min(1.0);
+    let (pw, ph) = (((w as f32 * fit).round() as u32).max(1), ((h as f32 * fit).round() as u32).max(1));
+    let content = format!("q {pw} 0 0 {ph} 0 0 cm /Im0 Do Q");
     let mut buf: Vec<u8> = Vec::with_capacity(data.len() + 1024);
     let mut offsets = Vec::new();
 
@@ -215,7 +235,7 @@ endobj
     buf.extend_from_slice(
         format!(
             "3 0 obj
-<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {w} {h}]              /Resources << /XObject << /Im0 4 0 R >> >> /Contents 5 0 R >>
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {pw} {ph}]              /Resources << /XObject << /Im0 4 0 R >> >> /Contents 5 0 R >>
 endobj
 "
         )

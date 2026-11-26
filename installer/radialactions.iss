@@ -1,6 +1,6 @@
 ; Builds dist\RadialActions-Setup-<version>.exe from target\release\radialactions.exe
 #define AppName "RadialActions"
-#define AppVersion "1.0.0"
+#define AppVersion "1.1.0"
 #define AppExe "radialactions.exe"
 
 [Setup]
@@ -19,6 +19,7 @@ OutputBaseFilename=RadialActions-Setup-{#AppVersion}
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
+SetupIconFile=..\assets\app.ico
 UninstallDisplayName={#AppName}
 UninstallDisplayIcon={app}\{#AppExe}
 CloseApplications=yes

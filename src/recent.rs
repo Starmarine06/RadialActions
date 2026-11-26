@@ -16,7 +16,7 @@ struct Row {
 }
 
 fn default_file() -> Option<PathBuf> {
-    std::env::var_os("APPDATA").map(|a| PathBuf::from(a).join("RadialActions").join("recent.txt"))
+    crate::config::data_dir().map(|d| d.join("recent.txt"))
 }
 
 fn load(file: &Path) -> Vec<Row> {

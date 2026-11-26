@@ -2,29 +2,39 @@
 
 mod actions;
 mod archive;
+mod config;
 mod convert;
+mod custom;
 mod gfx;
 mod hook;
+mod journal;
+mod ocr;
 mod office;
 #[cfg(test)]
 mod office_tests;
 mod ooxml;
 mod overlay;
-mod ocr;
 mod pdf;
 mod pdfword;
 mod pptx;
 mod recent;
+mod rename;
 mod sys;
 mod target;
 mod textconv;
+mod theme;
+mod transfer;
+mod ui;
 mod xlsx;
 
-use windows::Win32::Foundation::POINT;
+use std::path::PathBuf;
+use windows::core::w;
+use windows::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS, POINT};
 use windows::Win32::System::Com::{
     CoFreeUnusedLibrariesEx, CoInitializeEx, COINIT_APARTMENTTHREADED,
 };
-use windows::Win32::System::Threading::{GetCurrentProcess, SetProcessWorkingSetSize};
+use windows::Win32::System::Console::{AttachConsole, ATTACH_PARENT_PROCESS};
+use windows::Win32::System::Threading::{CreateMutexW, GetCurrentProcess, SetProcessWorkingSetSize};
 use windows::Win32::UI::HiDpi::{
     SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
 };
@@ -40,12 +50,12 @@ pub fn trim_memory() {
 
 fn on_trigger(pt: POINT) {
     let Some(paths) = target::targets_at(pt) else {
-        trim_memory();
+        hook::trim_later();
         return;
     };
-    let (title, key, root) = actions::wheel_for(&paths);
-    overlay::show(pt, title, key, paths[0].clone(), root);
-    trim_memory();
+    let settings = config::load();
+    let (title, key, root) = actions::wheel_with(&paths, &settings);
+    overlay::show(pt, title, key, paths[0].clone(), root, &settings);
 }
 
 fn main() {
@@ -54,62 +64,124 @@ fn main() {
         let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
     }
-    let args: Vec<String> = std::env::args().collect();
-    // `--probe X Y` prints the item at one screen point and exits; used for testing.
-    if args.get(1).map(String::as_str) == Some("--probe") {
-        let x = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
-        let y = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(0);
-        match target::targets_at(POINT { x, y }) {
-            Some(paths) => {
-                for p in paths {
-                    println!("{}", p.display());
-                }
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    match args.first().map(String::as_str) {
+        None => run_app(true),
+        Some("--background") => run_app(false),
+        Some("--ui") => ui::run(&args[1..]),
+        Some(command) => {
+            // A windowless program has to borrow the caller's console to print.
+            unsafe {
+                let _ = AttachConsole(ATTACH_PARENT_PROCESS);
             }
-            None => println!("(no item)"),
+            cli(command, &args[1..]);
         }
-        return;
     }
-    // `--list <file>...` prints the wheel the app would show for those files.
-    if args.get(1).map(String::as_str) == Some("--list") {
-        let files: Vec<std::path::PathBuf> = args.iter().skip(2).map(std::path::PathBuf::from).collect();
-        if files.is_empty() {
-            println!("usage: --list <file>...");
-        } else {
-            print!("{}", actions::outline(&files));
+}
+
+/// The tray app. `by_hand` is false when Windows started it at sign-in.
+fn run_app(by_hand: bool) {
+    unsafe {
+        // Held until the process exits.
+        let _mutex = CreateMutexW(None, false, w!("Local\\RadialActions"));
+        if GetLastError() == ERROR_ALREADY_EXISTS {
+            // Launching it again is how people look for its window.
+            hook::ask_running_for_settings();
+            return;
         }
-        return;
     }
-    // `--run "<action id>" <file>...` runs one wheel action headlessly, e.g. --run Convert/JPG a.png.
-    if args.get(1).map(String::as_str) == Some("--run") {
-        let id = args.get(2).cloned().unwrap_or_default();
-        let files: Vec<std::path::PathBuf> = args.iter().skip(3).map(std::path::PathBuf::from).collect();
-        let result = match files.len() {
-            0 => Err("no file given".to_string()),
-            1 => actions::run_by_id(&files[0], &id),
-            _ => actions::run_by_id_many(&files, &id),
-        };
-        match result {
-            Ok(msg) => println!("{msg}"),
-            Err(e) => {
-                println!("error: {e}");
-                std::process::exit(1);
-            }
-        }
-        return;
+    if !config::load().welcomed {
+        let _ = ui::spawn("welcome");
+    } else if by_hand && sys::is_packaged() && !sys::autostart_enabled() {
+        // A Start-menu launch should show something, not just a tray icon.
+        let _ = ui::spawn("settings");
     }
-    // `--autostart on|off|status` manages the start-with-Windows entry from a shell.
-    if args.get(1).map(String::as_str) == Some("--autostart") {
-        let msg = match args.get(2).map(String::as_str) {
-            Some("on") => sys::set_autostart(true).map(|_| "enabled".to_string()),
-            Some("off") => sys::set_autostart(false).map(|_| "disabled".to_string()),
-            _ => Ok(if sys::autostart_enabled() { "enabled" } else { "disabled" }.to_string()),
-        };
-        println!("{}", msg.unwrap_or_else(|e| format!("error: {e}")));
-        return;
-    }
-    sys::load_config();
-    trim_memory();
     if let Err(e) = hook::run(on_trigger) {
         eprintln!("failed to start: {e}");
+        std::process::exit(1);
     }
+}
+
+fn cli(command: &str, rest: &[String]) {
+    let files = |from: usize| -> Vec<PathBuf> { rest.iter().skip(from).map(PathBuf::from).collect() };
+    match command {
+        // `--probe X Y` prints the item at one screen point; used for testing.
+        "--probe" => {
+            let x = rest.first().and_then(|s| s.parse().ok()).unwrap_or(0);
+            let y = rest.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+            match target::targets_at(POINT { x, y }) {
+                Some(paths) => paths.iter().for_each(|p| println!("{}", p.display())),
+                None => println!("(no item)"),
+            }
+        }
+        // `--list <file>...` prints the wheel the app would show for those files.
+        "--list" => {
+            if rest.is_empty() {
+                println!("usage: --list <file>...");
+            } else {
+                print!("{}", actions::outline(&files(0)));
+            }
+        }
+        // `--run "<action id>" <file>...` runs one wheel action, e.g. --run Convert/JPG a.png.
+        "--run" => {
+            let id = rest.first().cloned().unwrap_or_default();
+            let files = files(1);
+            journal::begin();
+            let result = match files.len() {
+                0 => Err("no file given".to_string()),
+                1 => actions::run_by_id(&files[0], &id),
+                _ => actions::run_by_id_many(&files, &id),
+            };
+            journal::commit(&id);
+            report(result);
+        }
+        "--undo" => report(journal::undo()),
+        // `--autostart on|off|status` manages the start-with-Windows entry.
+        "--autostart" => {
+            let result = match rest.first().map(String::as_str) {
+                Some("on") => sys::set_autostart(true).map(|_| "enabled".to_string()),
+                Some("off") => sys::set_autostart(false).map(|_| "disabled".to_string()),
+                _ => Ok(if sys::autostart_enabled() { "enabled" } else { "disabled" }.to_string()),
+            };
+            report(result);
+        }
+        // `--render out.png <theme> <scale> <hover|-> <group|-> <file>...` draws a wheel to a PNG.
+        "--render" => report(render(rest)),
+        _ => println!("options: --list, --run, --undo, --autostart, --probe, --render"),
+    }
+}
+
+fn report(result: Result<String, String>) {
+    match result {
+        Ok(msg) => println!("{msg}"),
+        Err(e) => {
+            println!("error: {e}");
+            std::process::exit(1);
+        }
+    }
+}
+
+fn render(args: &[String]) -> Result<String, String> {
+    let [out, theme, scale, hover, open, files @ ..] = args else {
+        return Err("usage: --render out.png <theme> <scale> <hover|-> <group|-> <file>...".into());
+    };
+    let paths: Vec<PathBuf> = files.iter().map(PathBuf::from).collect();
+    if paths.is_empty() {
+        return Err("no file given".into());
+    }
+    let (title, _, root) = actions::wheel_with(&paths, &config::load());
+    let open: Vec<&str> = open.split(',').filter(|s| !s.is_empty() && *s != "-").collect();
+    let (pixels, w, h) = overlay::render(title, &root, theme, scale.parse().unwrap_or(1.0), &open, hover.parse().ok())
+        .ok_or("could not draw that wheel")?;
+    // Premultiplied BGRA to straight RGBA.
+    let rgba: Vec<u8> = pixels
+        .iter()
+        .flat_map(|p| {
+            let a = p >> 24;
+            let un = |shift: u32| (((p >> shift) & 0xFF) * 255).checked_div(a).unwrap_or(0).min(255) as u8;
+            [un(16), un(8), un(0), a as u8]
+        })
+        .collect();
+    image::save_buffer(out, &rgba, w as u32, h as u32, image::ExtendedColorType::Rgba8).map_err(|e| e.to_string())?;
+    Ok(out.clone())
 }

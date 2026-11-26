@@ -1,0 +1,407 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:">
+<title>RadialActions</title>
+<style>
+:root{--bg:#f3f3f5;--card:#fff;--line:#e3e3e8;--text:#1b1b1f;--dim:#66666f;--accent:#0067c0;--on-accent:#fff;--field:#fff;--bad:#c42b3a;--good:#0f7b4f}
+html.dark{--bg:#18181b;--card:#232327;--line:#34343a;--text:#f4f4f6;--dim:#a2a2ad;--field:#1d1d21;--bad:#ff7a86;--good:#4fd69c}
+html.neon{--bg:#0b0816;--card:#141028;--line:#2b2352;--text:#e6fbff;--dim:#9d94c9;--accent:#ff2a9d;--on-accent:#fff;--field:#0f0b20;--bad:#ff8a7a;--good:#00eaff}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--text);font:14px/1.45 "Segoe UI Variable Text","Segoe UI",sans-serif;user-select:none;overflow:hidden}
+.icon{font-family:"Segoe Fluent Icons","Segoe MDL2 Assets";font-style:normal}
+h1{font:600 24px/1.25 "Segoe UI Variable Display","Segoe UI",sans-serif;margin:0 0 4px}
+h2{font-size:15px;margin:0 0 4px}
+p{margin:0 0 10px}
+.dim{color:var(--dim)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px 18px;margin-bottom:12px}
+html.neon .card{box-shadow:0 0 18px rgba(0,214,255,.08)}
+.row{display:flex;align-items:center;gap:12px}
+.row+.row{margin-top:12px;border-top:1px solid var(--line);padding-top:12px}
+.grow{flex:1;min-width:0}
+button,select,input[type=text],input[type=number]{font:inherit;color:var(--text);background:var(--field);border:1px solid var(--line);border-radius:6px;padding:6px 12px}
+button{cursor:pointer}
+button:hover{border-color:var(--accent)}
+button:disabled{opacity:.4;cursor:default}
+button.primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent);font-weight:600;padding:8px 18px}
+button.quiet{background:transparent;border-color:transparent;padding:5px 8px}
+button.link{background:none;border:0;padding:0;color:var(--accent);text-decoration:underline}
+:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+input[type=text],input[type=number]{width:100%;user-select:text}
+input[type=number]{width:90px}
+input[type=checkbox]{appearance:none;width:40px;height:20px;border-radius:10px;border:1px solid var(--dim);background:transparent;position:relative;cursor:pointer;flex:none;margin:0}
+input[type=checkbox]::after{content:"";position:absolute;top:3px;left:3px;width:12px;height:12px;border-radius:50%;background:var(--dim);transition:.15s}
+input[type=checkbox]:checked{background:var(--accent);border-color:var(--accent)}
+input[type=checkbox]:checked::after{left:23px;background:var(--on-accent)}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;padding:2px;gap:2px;background:var(--field);flex-wrap:wrap}
+.seg button{border:0;background:transparent;border-radius:6px}
+.seg button[aria-pressed=true]{background:var(--accent);color:var(--on-accent)}
+.layout{display:flex;height:100%}
+nav{width:200px;padding:18px 10px;display:flex;flex-direction:column;gap:3px;border-right:1px solid var(--line)}
+nav .brand{font-weight:700;font-size:16px;padding:0 10px 14px}
+nav button{display:flex;gap:12px;align-items:center;text-align:left;border:0;background:transparent;padding:9px 10px}
+nav button[aria-current=page]{background:var(--card);box-shadow:inset 3px 0 0 var(--accent)}
+main{flex:1;overflow:auto;padding:22px 26px}
+.preview{text-align:center;min-height:200px}
+.preview img{max-width:100%;max-height:400px}
+.split{display:grid;grid-template-columns:minmax(260px,1fr) minmax(300px,1.1fr);gap:14px;align-items:start}
+.slice{display:flex;align-items:center;gap:8px;padding:5px 0}
+.slice+.slice{border-top:1px solid var(--line)}
+.slice.off .grow{opacity:.45;text-decoration:line-through}
+.fields{display:grid;grid-template-columns:110px 1fr;gap:8px 10px;align-items:center}
+.status{min-height:20px;margin:6px 0 0}
+.status.bad{color:var(--bad)}
+.status.good{color:var(--good)}
+.welcome{height:100%;overflow:auto;padding:30px 40px}
+.steps{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:18px 0}
+.steps .card{margin:0}
+.steps b{display:block;margin:8px 0 4px}
+.big{font-size:26px;color:var(--accent)}
+kbd{font:600 12px "Segoe UI";border:1px solid var(--line);border-bottom-width:3px;border-radius:5px;padding:1px 7px;background:var(--field)}
+.renamer{display:flex;flex-direction:column;height:100%;padding:18px 22px;gap:12px}
+.renamer .card{margin:0}
+.rules{display:grid;grid-template-columns:auto 1fr auto 1fr;gap:8px 12px;align-items:center}
+.table{flex:1;overflow:auto;background:var(--card);border:1px solid var(--line);border-radius:10px}
+table{width:100%;border-collapse:collapse;table-layout:fixed}
+td,th{text-align:left;padding:6px 12px;border-bottom:1px solid var(--line);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;user-select:text}
+th{position:sticky;top:0;background:var(--card);font-weight:600}
+td.bad{color:var(--bad)}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+"use strict";
+const PAGE = "__PAGE__";
+const pending = new Map();
+let nextId = 1;
+window.reply = (id, ok, data) => {
+  const p = pending.get(id);
+  if (!p) return;
+  pending.delete(id);
+  ok ? p.resolve(data) : p.reject(data);
+};
+function call(cmd, args = null) {
+  const id = nextId++;
+  return new Promise((resolve, reject) => {
+    pending.set(id, { resolve, reject });
+    window.ipc.postMessage(JSON.stringify({ id, cmd, args }));
+  });
+}
+// Everything is built with DOM calls, so file and folder names are never parsed as HTML.
+function h(tag, props = {}, ...kids) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
+    else if (k in el && k !== "list") el[k] = v;
+    else el.setAttribute(k, v);
+  }
+  el.append(...kids.flat(Infinity).filter(k => k !== null && k !== false));
+  return el;
+}
+const icon = code => h("i", { className: "icon", textContent: String.fromCodePoint(code), ariaHidden: "true" });
+
+let data, S, tab = "general", category = "image", saveTimer, root;
+
+function paintTheme() {
+  const t = S.theme;
+  const dark = t === "dark" || t === "neon" || (t === "system" && !data.systemLight);
+  document.documentElement.className = t === "neon" ? "neon" : dark ? "dark" : "";
+  const style = document.documentElement.style;
+  if (t === "neon") style.removeProperty("--accent");
+  else {
+    style.setProperty("--accent", data.accent);
+    const n = parseInt(data.accent.slice(1), 16);
+    const lum = (0.2126 * (n >> 16) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255)) / 255;
+    style.setProperty("--on-accent", lum > 0.6 ? "#1b1b1f" : "#fff");
+  }
+}
+function save() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => call("save", S).catch(e => alertLine(e)), 200);
+}
+function change(fn, redraw = true) {
+  fn();
+  save();
+  paintTheme();
+  if (redraw) render();
+}
+function alertLine(message) {
+  const el = document.getElementById("status");
+  if (el) { el.textContent = message; el.className = "status bad"; }
+}
+const seg = (options, value, pick) => h("div", { className: "seg", role: "group" },
+  options.map(([v, label]) => h("button", { textContent: label, "aria-pressed": String(v === value), onclick: () => pick(v) })));
+const toggle = (checked, onchange, label) => h("input", { type: "checkbox", checked, "aria-label": label, onchange: e => onchange(e.target.checked) });
+const row = (title, hint, control) => h("div", { className: "row" },
+  h("div", { className: "grow" }, h("div", { textContent: title }), hint ? h("div", { className: "dim", textContent: hint }) : null),
+  control);
+const head = (title, sub) => [h("h1", { textContent: title }), h("p", { className: "dim", textContent: sub })];
+
+const KEYS = [["shift", "Shift"], ["ctrl", "Ctrl"], ["alt", "Alt"], ["ctrl+shift", "Ctrl+Shift"]];
+const THEMES = [["system", "Match Windows"], ["light", "Light"], ["dark", "Dark"], ["neon", "Neon"]];
+const keyName = () => KEYS.find(k => k[0] === S.key)[1];
+
+function startupRow() {
+  return row("Start with Windows", "Ready as soon as you sign in.", toggle(data.autostart, on =>
+    call("autostart", on).then(v => { data.autostart = v; render(); })
+      .catch(e => { render(); alertLine(e); }), "Start with Windows"));
+}
+
+function general() {
+  return [
+    head("General", "How the wheel opens."),
+    h("div", { className: "card" },
+      row("Trigger key", "Hold it and rest the mouse on a file.", seg(KEYS, S.key, v => change(() => S.key = v))),
+      row("Picking a slice", S.mode === "flick" ? "Point at a slice, then let go of the key." : "Point at a slice and click.",
+        seg([["click", "Click"], ["flick", "Flick and release"]], S.mode, v => change(() => S.mode = v))),
+      row("Delay before it opens", "In milliseconds. Raise it if it opens when you don't want it.",
+        h("input", { type: "number", min: 50, max: 1000, step: 10, value: S.delay_ms, "aria-label": "Delay in milliseconds",
+          onchange: e => change(() => S.delay_ms = Math.min(1000, Math.max(50, Math.round(+e.target.value) || 150))) })),
+      row("Stay quiet in full screen", "No wheel during games, films or presentations.",
+        toggle(S.pause_fullscreen, v => change(() => S.pause_fullscreen = v), "Stay quiet in full screen")),
+      startupRow()),
+    h("div", { className: "card" },
+      row("Undo the last action", data.undo ? data.undo : "Nothing to undo yet.",
+        h("button", { textContent: "Undo", disabled: !data.undo, onclick: () =>
+          call("undo").then(m => { data.undo = null; render(); const s = document.getElementById("status"); s.textContent = m; s.className = "status good"; })
+            .catch(e => alertLine(e)) }))),
+  ];
+}
+
+function previewBox() {
+  const box = h("div", { className: "card preview" }, h("span", { className: "dim", textContent: "Drawing..." }));
+  call("preview", { settings: S, category })
+    .then(url => box.replaceChildren(h("img", { src: url, alt: "Preview of the wheel" })))
+    .catch(e => box.replaceChildren(h("p", { className: "dim", textContent: e })));
+  return box;
+}
+
+function look() {
+  return [
+    head("Look", "Pick a style. The preview is drawn by the same code as the real wheel."),
+    h("div", { className: "card" },
+      row("Theme", "Match Windows follows light or dark mode and your accent colour.", seg(THEMES, S.theme, v => change(() => S.theme = v))),
+      row("Opening animation", "", toggle(S.animate, v => change(() => S.animate = v), "Opening animation"))),
+    previewBox(),
+  ];
+}
+
+function layoutFor(key) {
+  return S.wheels[key] || { order: [], hidden: [] };
+}
+function orderedSlices(entry) {
+  const order = layoutFor(entry.key).order;
+  const rank = s => { const i = order.indexOf(s); return i < 0 ? order.length + entry.slices.indexOf(s) : i; };
+  return entry.slices.filter(s => s !== "Send" || S.send).sort((a, b) => rank(a) - rank(b));
+}
+function wheelTab() {
+  const entry = data.catalogue.find(c => c.key === category);
+  const slices = orderedSlices(entry);
+  const layout = layoutFor(category);
+  const store = (order, hidden) => change(() => S.wheels[category] = { order, hidden });
+  const move = (i, to) => {
+    const order = slices.slice();
+    order.splice(to, 0, ...order.splice(i, 1));
+    store(order, layout.hidden);
+  };
+  const list = slices.map((name, i) => {
+    const shown = !layout.hidden.includes(name);
+    return h("div", { className: "slice" + (shown ? "" : " off") },
+      h("span", { className: "grow", textContent: name }),
+      h("button", { className: "quiet", title: "Pin to the top of the wheel", "aria-label": "Pin " + name, disabled: i === 0, onclick: () => move(i, 0) }, icon(0xE718)),
+      h("button", { className: "quiet", title: "Move earlier", "aria-label": "Move " + name + " earlier", disabled: i === 0, onclick: () => move(i, i - 1) }, icon(0xE70E)),
+      h("button", { className: "quiet", title: "Move later", "aria-label": "Move " + name + " later", disabled: i === slices.length - 1, onclick: () => move(i, i + 1) }, icon(0xE70D)),
+      toggle(shown, on => store(slices, on ? layout.hidden.filter(x => x !== name) : [...layout.hidden, name]), "Show " + name));
+  });
+  return [
+    head("Wheel", "Choose what each kind of file gets, and in what order. Clockwise from the top."),
+    h("div", { className: "card" },
+      row("Move, copy and rename slice", "Adds Send to every wheel.", toggle(S.send, v => change(() => S.send = v), "Send slice"))),
+    h("div", { className: "split" },
+      h("div", { className: "card" },
+        h("div", { className: "row" },
+          h("select", { className: "grow", "aria-label": "Kind of file", onchange: e => { category = e.target.value; render(); } },
+            data.catalogue.map(c => h("option", { value: c.key, textContent: c.title, selected: c.key === category }))),
+          h("button", { textContent: "Reset", onclick: () => change(() => delete S.wheels[category]) })),
+        list),
+      previewBox()),
+  ];
+}
+
+const TEMPLATES = [
+  { name: "Notepad", program: "notepad.exe", args: "{file}", types: "txt, log, md, json, csv, ini" },
+  { name: "Paint", program: "mspaint.exe", args: "{file}", types: "png, jpg, jpeg, bmp, gif" },
+  { name: "Terminal", program: "wt.exe", args: "-d {file}", types: "folder" },
+];
+function mine() {
+  const field = (action, key, label, hint, extra) => [
+    h("label", { textContent: label }),
+    h("div", { className: "row" },
+      h("input", { type: "text", className: "grow", value: action[key], placeholder: hint, "aria-label": label,
+        onchange: e => change(() => action[key] = e.target.value, false) }),
+      extra || null),
+  ];
+  return [
+    head("My actions", "Add your own slices. They show up under Mine for the file types you list."),
+    h("div", { className: "card" },
+      h("div", { className: "row" },
+        h("button", { className: "primary", textContent: "New action", onclick: () => change(() => S.custom.push({ name: "", program: "", args: "{file}", types: "*" })) }),
+        h("span", { className: "dim", textContent: "or start from:" }),
+        TEMPLATES.map(t => h("button", { textContent: t.name, onclick: () => change(() => S.custom.push({ ...t })) })))),
+    S.custom.map((action, i) => h("div", { className: "card" },
+      h("div", { className: "fields" },
+        field(action, "name", "Name", "What the slice says"),
+        field(action, "program", "Program", "C:\\Tools\\ffmpeg.exe",
+          h("button", { textContent: "Browse", onclick: () => call("pickProgram").then(p => { if (p) change(() => action.program = p); }).catch(alertLine) })),
+        field(action, "args", "Arguments", "-i {file} {dir}\\{stem}.mp3"),
+        field(action, "types", "File types", "png, jpg   or   folder   or   *")),
+      h("div", { className: "row" },
+        h("span", { className: "grow dim", textContent: "{file}  {name}  {stem}  {dir}  {files}" }),
+        h("button", { textContent: "Delete", onclick: () => change(() => S.custom.splice(i, 1)) })))),
+  ];
+}
+
+function folders() {
+  const add = () => call("pickFolder").then(p => { if (p && !S.folders.includes(p)) change(() => S.folders.push(p)); }).catch(alertLine);
+  return [
+    head("Folders", "Pinned folders appear first under Send, then Move to and Copy to. Recent ones fill the rest, five in total."),
+    h("div", { className: "card" },
+      S.folders.map((f, i) => h("div", { className: "slice" },
+        icon(0xE8B7),
+        h("span", { className: "grow", textContent: f }),
+        h("button", { textContent: "Remove", onclick: () => change(() => S.folders.splice(i, 1)) }))),
+      S.folders.length ? null : h("p", { className: "dim", textContent: "No pinned folders yet." }),
+      h("div", { className: "row" }, h("button", { className: "primary", textContent: "Add folder", onclick: add }))),
+  ];
+}
+
+function about() {
+  const link = (what, label) => h("button", { className: "link", textContent: label, onclick: () => call("open", what).catch(alertLine) });
+  return [
+    head("About", "RadialActions " + data.version),
+    h("div", { className: "card" },
+      h("p", { textContent: "Your files are converted on this PC. RadialActions has no account, no ads and sends nothing anywhere." }),
+      h("p", {}, "Free and open source under the MIT licence."),
+      h("div", { className: "row" }, link("source", "Source code"), link("issues", "Report a problem"), link("privacy", "Privacy policy"))),
+    h("div", { className: "card" },
+      row("Practice folder", "Sample files to try the wheel on.", h("button", { textContent: "Open it", onclick: () => call("practice").catch(alertLine) }))),
+  ];
+}
+
+const TABS = [
+  ["general", "General", 0xE713, general],
+  ["look", "Look", 0xE790, look],
+  ["wheel", "Wheel", 0xEA3A, wheelTab],
+  ["mine", "My actions", 0xE734, mine],
+  ["folders", "Folders", 0xE8B7, folders],
+  ["about", "About", 0xE946, about],
+];
+
+function settings() {
+  const scroll = root.querySelector("main")?.scrollTop || 0;
+  const previous = root.dataset.tab;
+  const body = TABS.find(t => t[0] === tab)[3]();
+  const page = h("main", {}, body, h("p", { id: "status", className: "status", role: "status" }));
+  root.replaceChildren(h("div", { className: "layout" },
+    h("nav", {}, h("div", { className: "brand", textContent: "RadialActions" }),
+      TABS.map(([key, label, code]) => h("button", { "aria-current": key === tab ? "page" : "false", onclick: () => { tab = key; render(); } }, icon(code), label))),
+    page));
+  root.dataset.tab = tab;
+  page.scrollTop = previous === tab ? scroll : 0;
+}
+
+function welcome() {
+  const step = (code, title, ...text) => h("div", { className: "card" },
+    h("i", { className: "icon big", textContent: String.fromCodePoint(code) }), h("b", { textContent: title }), h("span", { className: "dim" }, ...text));
+  root.replaceChildren(h("div", { className: "welcome" },
+    h("h1", { textContent: "File actions, right under your mouse" }),
+    h("p", { className: "dim", textContent: "RadialActions lives in the tray, next to the clock. There's no window to keep open." }),
+    h("div", { className: "steps" },
+      step(0xE765, "1. Hold " + keyName(), "In File Explorer or on the desktop."),
+      step(0xE962, "2. Rest on a file", "Stop moving for a moment and the wheel opens."),
+      step(0xE8FB, "3. Pick a slice", S.mode === "flick" ? "Point and let go. " : "Click it. ", "New files land beside the original, which is never changed.")),
+    h("div", { className: "card" },
+      row("Look", "", seg(THEMES, S.theme, v => change(() => S.theme = v))),
+      row("Picking", "", seg([["click", "Click"], ["flick", "Flick and release"]], S.mode, v => change(() => S.mode = v))),
+      startupRow()),
+    h("div", { className: "row" },
+      h("button", { className: "primary", textContent: "Try it on sample files", onclick: () => call("practice").catch(alertLine) }),
+      h("span", { className: "grow dim", textContent: "Hold " + keyName() + " and rest on Sunset." }),
+      h("button", { textContent: "Done", onclick: () => { call("save", S).finally(() => call("close")); } })),
+    h("p", { id: "status", className: "status", role: "status" })));
+}
+
+const rules = { find: "", replace: "", prefix: "", suffix: "", case: "keep", number: false, start: 1, digits: 2 };
+let previewRun = 0;
+function renamer() {
+  const body = h("tbody");
+  const go = h("button", { className: "primary", textContent: "Rename", disabled: true });
+  const status = h("span", { className: "grow status", role: "status" });
+  function refresh() {
+    const run = ++previewRun;
+    call("renamePreview", rules).then(rows => {
+      if (run !== previewRun) return;
+      body.replaceChildren(...rows.map(r => h("tr", {},
+        h("td", { textContent: r.old, title: r.old }),
+        h("td", { textContent: r.error ? r.new + "  (" + r.error + ")" : r.new, title: r.new, className: r.error ? "bad" : r.old === r.new ? "dim" : "" }))));
+      const changed = rows.filter(r => r.old !== r.new).length;
+      const broken = rows.some(r => r.error);
+      go.disabled = broken || !changed;
+      go.textContent = changed ? "Rename " + changed + (changed === 1 ? " file" : " files") : "Rename";
+      status.textContent = broken ? "Fix the names marked in red." : "";
+      status.className = "grow status" + (broken ? " bad" : "");
+    }).catch(e => { status.textContent = e; status.className = "grow status bad"; });
+  }
+  const set = (key, value) => { rules[key] = value; refresh(); };
+  const text = (key, label) => [h("label", { textContent: label }),
+    h("input", { type: "text", "aria-label": label, oninput: e => set(key, e.target.value) })];
+  const num = (key, label, min, max) => [h("label", { textContent: label }),
+    h("input", { type: "number", min, max, value: rules[key], "aria-label": label, oninput: e => set(key, Math.min(max, Math.max(min, Math.round(+e.target.value) || 0))) })];
+  go.onclick = () => {
+    go.disabled = true;
+    call("renameApply", rules).then(n => {
+      status.textContent = "Renamed " + n + ". You can undo this from the tray menu.";
+      status.className = "grow status good";
+      go.textContent = "Done";
+      go.disabled = false;
+      go.onclick = () => call("close");
+      document.querySelectorAll("input, select").forEach(el => el.disabled = true);
+    }).catch(e => { status.textContent = e; status.className = "grow status bad"; });
+  };
+  root.replaceChildren(h("div", { className: "renamer" },
+    h("div", { className: "card rules" },
+      text("find", "Find"), text("replace", "Replace with"),
+      text("prefix", "Add before"), text("suffix", "Add after"),
+      h("label", { textContent: "Letter case" }),
+      h("select", { "aria-label": "Letter case", onchange: e => set("case", e.target.value) },
+        [["keep", "Leave as is"], ["lower", "lowercase"], ["upper", "UPPERCASE"], ["title", "Title Case"]].map(([v, l]) => h("option", { value: v, textContent: l }))),
+      h("label", { textContent: "Number them" }),
+      h("div", {}, toggle(false, v => set("number", v), "Number the files")),
+      num("start", "Start at", 0, 1000000), num("digits", "Digits", 1, 10)),
+    h("div", { className: "table" }, h("table", {},
+      h("thead", {}, h("tr", {}, h("th", { textContent: "Now" }), h("th", { textContent: "After" }))), body)),
+    h("div", { className: "row" }, status, h("button", { textContent: "Cancel", onclick: () => call("close") }), go)));
+  refresh();
+}
+
+function render() {
+  if (PAGE === "welcome") welcome();
+  else if (PAGE === "rename") renamer();
+  else settings();
+}
+
+document.addEventListener("contextmenu", e => { if (e.target.tagName !== "INPUT") e.preventDefault(); });
+call("load").then(d => {
+  data = d;
+  S = d.settings;
+  root = document.getElementById("app");
+  root.style.height = "100%";
+  paintTheme();
+  render();
+}).catch(e => document.body.append(String(e)));
+</script>
+</body>
+</html>

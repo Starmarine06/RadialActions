@@ -29,6 +29,7 @@ fn new_dir(parent: &Path, name: &str) -> Result<PathBuf> {
         dir = parent.join(format!("{name} ({n})"));
         n += 1;
     }
+    crate::journal::created(&dir);
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     Ok(dir)
 }

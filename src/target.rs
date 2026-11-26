@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use windows::core::{w, Interface, BSTR};
 use windows::Win32::Foundation::{HWND, POINT};
 use windows::Win32::System::Com::{
-    CoCreateInstance, IServiceProvider, CLSCTX_ALL, CLSCTX_INPROC_SERVER,
+    CoCreateInstance, IDispatch, IServiceProvider, CLSCTX_ALL, CLSCTX_INPROC_SERVER,
 };
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{
@@ -17,8 +17,9 @@ use windows::Win32::UI::Accessibility::{
     UIA_NamePropertyId,
 };
 use windows::Win32::UI::Shell::{
-    IFolderView, IShellBrowser, IShellItemArray, IShellWindows, ShellWindows, SIGDN_FILESYSPATH,
-    SIGDN_NORMALDISPLAY, SVGIO_ALLVIEW, SVGIO_SELECTION, SWC_DESKTOP, SWFO_NEEDDISPATCH,
+    IFolderView, IShellBrowser, IShellItemArray, IShellWindows, IWebBrowserApp, ShellWindows,
+    SIGDN_FILESYSPATH, SIGDN_NORMALDISPLAY, SVGIO_ALLVIEW, SVGIO_FLAG_VIEWORDER, SVGIO_SELECTION,
+    SWC_DESKTOP, SWFO_NEEDDISPATCH, _SVGIO,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     FindWindowExW, GetAncestor, WindowFromPoint, GA_ROOT,
@@ -65,14 +66,15 @@ unsafe fn resolve(pt: POINT) -> Option<(IFolderView, PathBuf)> {
         let desktop = matches!(window_class(root).as_str(), "Progman" | "WorkerW");
         // Overlays (GPU HUDs etc.) can sit above the desktop and swallow UIA
         // point queries, so the desktop is matched against its own icon list.
-        let name = if desktop { desktop_item_name_at(hit, pt)? } else { item_name_at(pt)? };
+        let (name, index) = if desktop { desktop_item_at(hit, pt)? } else { item_at(pt)? };
         let view = folder_view_for(root)?;
-        let path = path_for_name(&view, &name)?;
+        let path = path_for(&view, &name, index)?;
         Some((view, path))
     }
 }
 
-unsafe fn item_name_at(pt: POINT) -> Option<String> {
+/// Name and, when Explorer exposes it, view position of the item under `pt`.
+unsafe fn item_at(pt: POINT) -> Option<(String, Option<usize>)> {
     let uia: IUIAutomation = CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok()?;
     let walker = uia.ControlViewWalker().ok()?;
     let mut el: IUIAutomationElement = uia.ElementFromPoint(pt).ok()?;
@@ -82,14 +84,15 @@ unsafe fn item_name_at(pt: POINT) -> Option<String> {
         if ct == UIA_ListItemControlTypeId || ct == UIA_DataItemControlTypeId {
             let name: BSTR = el.CurrentName().ok()?;
             let s = name.to_string();
-            return (!s.is_empty()).then_some(s);
+            let index = el.CurrentAutomationId().ok().and_then(|id| id.to_string().parse().ok());
+            return (!s.is_empty()).then_some((s, index));
         }
         el = walker.GetParentElement(&el).ok()?;
     }
     None
 }
 
-unsafe fn desktop_item_name_at(hit: HWND, pt: POINT) -> Option<String> {
+unsafe fn desktop_item_at(hit: HWND, pt: POINT) -> Option<(String, Option<usize>)> {
     let list = if window_class(hit) == "SysListView32" {
         hit
     } else {
@@ -108,7 +111,8 @@ unsafe fn desktop_item_name_at(hit: HWND, pt: POINT) -> Option<String> {
         let el = items.GetElement(i).ok()?;
         let r = el.CachedBoundingRectangle().ok()?;
         if pt.x >= r.left && pt.x < r.right && pt.y >= r.top && pt.y < r.bottom {
-            return Some(el.CachedName().ok()?.to_string());
+            // List-view children come back in item order, which is view order.
+            return Some((el.CachedName().ok()?.to_string(), Some(i as usize)));
         }
     }
     None
@@ -119,9 +123,9 @@ unsafe fn folder_view_for(root: HWND) -> Option<IFolderView> {
     let windows: IShellWindows = CoCreateInstance(&ShellWindows, None, CLSCTX_ALL).ok()?;
 
     let class = window_class(root);
-    let disp = if class == "Progman" || class == "WorkerW" {
+    if class == "Progman" || class == "WorkerW" {
         let mut found = 0i32;
-        windows
+        let disp = windows
             .FindWindowSW(
                 &VARIANT::from(CSIDL_DESKTOP),
                 &VARIANT::default(),
@@ -129,37 +133,72 @@ unsafe fn folder_view_for(root: HWND) -> Option<IFolderView> {
                 &mut found,
                 SWFO_NEEDDISPATCH,
             )
-            .ok()?
-    } else {
-        let count = windows.Count().ok()?;
-        let mut hit = None;
-        for i in 0..count {
-            let Ok(d) = windows.Item(&VARIANT::from(i)) else { continue };
-            let Ok(app) = d.cast::<windows::Win32::UI::Shell::IWebBrowserApp>() else { continue };
-            if app.HWND().map(|h| h.0 as isize) == Ok(root.0 as isize) {
-                hit = Some(d);
-                break;
-            }
-        }
-        hit?
-    };
+            .ok()?;
+        return view_of(&browser_of(&disp)?);
+    }
 
+    // Windows 11 lists every tab as its own window with the same HWND. The
+    // active tab is the topmost tab child of the frame.
+    let active = FindWindowExW(Some(root), None, w!("ShellTabWindowClass"), None).ok();
+    let mut fallback = None;
+    for i in 0..windows.Count().ok()? {
+        let Ok(d) = windows.Item(&VARIANT::from(i)) else { continue };
+        let Ok(app) = d.cast::<IWebBrowserApp>() else { continue };
+        if app.HWND().map(|h| h.0 as isize) != Ok(root.0 as isize) {
+            continue;
+        }
+        let Some(browser) = browser_of(&d) else { continue };
+        match active {
+            Some(tab) if browser.GetWindow().ok() != Some(tab) => {
+                fallback.get_or_insert(browser);
+            }
+            _ => return view_of(&browser),
+        }
+    }
+    // Builds without tab windows (Windows 10) have only the one entry.
+    match active {
+        Some(_) => None,
+        None => view_of(&fallback?),
+    }
+}
+
+unsafe fn browser_of(disp: &IDispatch) -> Option<IShellBrowser> {
     let sp: IServiceProvider = disp.cast().ok()?;
-    let browser: IShellBrowser = sp.QueryService(&SID_STOP_LEVEL_BROWSER).ok()?;
+    sp.QueryService(&SID_STOP_LEVEL_BROWSER).ok()
+}
+
+unsafe fn view_of(browser: &IShellBrowser) -> Option<IFolderView> {
     browser.QueryActiveShellView().ok()?.cast().ok()
 }
 
-unsafe fn path_for_name(view: &IFolderView, name: &str) -> Option<PathBuf> {
-    let items: IShellItemArray = view.Items(SVGIO_ALLVIEW).ok()?;
-    for i in 0..items.GetCount().ok()? {
-        let item = items.GetItemAt(i).ok()?;
-        let shown = item.GetDisplayName(SIGDN_NORMALDISPLAY).ok()?;
-        if shown.to_string().ok()? == name {
-            let p = item.GetDisplayName(SIGDN_FILESYSPATH).ok()?;
-            return p.to_string().ok().map(PathBuf::from);
+/// The real path of the hovered item. Display names repeat when extensions are
+/// hidden ("report.pdf" and "report.docx" both read "report"), so the view
+/// position decides, and an ambiguous name without one is refused rather than
+/// guessed: acting on the wrong file is worse than doing nothing.
+unsafe fn path_for(view: &IFolderView, name: &str, index: Option<usize>) -> Option<PathBuf> {
+    let items: IShellItemArray = view
+        .Items(_SVGIO(SVGIO_ALLVIEW.0 | SVGIO_FLAG_VIEWORDER.0 as i32))
+        .ok()?;
+    let count = items.GetCount().ok()?;
+    let mut names = Vec::new();
+    for i in 0..count {
+        let shown = items.GetItemAt(i).ok()?.GetDisplayName(SIGDN_NORMALDISPLAY).ok()?;
+        names.push(shown.to_string().ok()?);
+    }
+    let at = pick_index(&names, name, index)?;
+    let p = items.GetItemAt(at as u32).ok()?.GetDisplayName(SIGDN_FILESYSPATH).ok()?;
+    p.to_string().ok().map(PathBuf::from)
+}
+
+fn pick_index(names: &[String], name: &str, index: Option<usize>) -> Option<usize> {
+    if let Some(i) = index {
+        if names.get(i).is_some_and(|n| n == name) {
+            return Some(i);
         }
     }
-    None
+    let mut matches = names.iter().enumerate().filter(|(_, n)| *n == name).map(|(i, _)| i);
+    let first = matches.next()?;
+    matches.next().is_none().then_some(first)
 }
 
 fn window_class(hwnd: HWND) -> String {
@@ -167,4 +206,29 @@ fn window_class(hwnd: HWND) -> String {
     let mut buf = [0u16; 64];
     let n = unsafe { GetClassNameW(hwnd, &mut buf) } as usize;
     String::from_utf16_lossy(&buf[..n])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::pick_index;
+
+    fn names(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn duplicate_names_follow_the_view_position() {
+        let n = names(&["report", "report", "zeta"]);
+        assert_eq!(pick_index(&n, "report", Some(1)), Some(1));
+        assert_eq!(pick_index(&n, "report", Some(0)), Some(0));
+    }
+
+    #[test]
+    fn an_ambiguous_name_is_never_guessed() {
+        let n = names(&["report", "report", "zeta"]);
+        assert_eq!(pick_index(&n, "report", None), None);
+        assert_eq!(pick_index(&n, "report", Some(2)), None);
+        assert_eq!(pick_index(&n, "zeta", Some(0)), Some(2));
+        assert_eq!(pick_index(&n, "missing", Some(0)), None);
+    }
 }
