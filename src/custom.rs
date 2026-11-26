@@ -12,10 +12,14 @@ pub fn matches(c: &Custom, path: &Path) -> bool {
     if c.name.trim().is_empty() || c.program.trim().is_empty() {
         return false;
     }
+    type_matches(&c.types, path)
+}
+
+/// Is `path` covered by a list such as "*", "folder" or "png, jpg"?
+pub fn type_matches(list: &str, path: &Path) -> bool {
     let dir = path.is_dir();
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
-    let types: Vec<String> = c
-        .types
+    let types: Vec<String> = list
         .split([',', ' ', ';'])
         .map(|t| t.trim().trim_start_matches("*.").trim_start_matches('.').to_ascii_lowercase())
         .filter(|t| !t.is_empty())

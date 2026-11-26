@@ -236,6 +236,44 @@ const TEMPLATES = [
   { name: "Paint", program: "mspaint.exe", args: "{file}", types: "png, jpg, jpeg, bmp, gif" },
   { name: "Terminal", program: "wt.exe", args: "-d {file}", types: "folder" },
 ];
+let menu = null, menuBusy = false;
+function labelFor(title) {
+  const parts = title.split(" > ");
+  let label = parts.pop();
+  if (parts.length && label.startsWith("Choose")) label = parts.pop();
+  return label.replace(/(\.\.\.|…)$/, "").replace(/^(Send|Edit|Open) with /, "").trim();
+}
+function readMenu(pickFile) {
+  menuBusy = true;
+  render();
+  call("menuEntries", pickFile).then(r => { if (r) menu = r; menuBusy = false; render(); })
+    .catch(e => { menuBusy = false; render(); alertLine(e); });
+}
+function rightClick() {
+  const added = t => S.apps.some(a => a.title === t);
+  const add = f => change(() => S.apps.push({ label: labelFor(f.title), title: f.title, source: f.source, clsid: f.clsid, types: f.types }));
+  return [
+    h("div", { className: "card" },
+      h("h2", { textContent: "From the right-click menu" }),
+      h("p", { className: "dim", textContent: "Put another app's right-click option on the wheel, like sending with Blip or resizing with PowerToys. Up to four show for each file." }),
+      h("div", { className: "row" },
+        h("button", { className: "primary", textContent: "Show options", disabled: menuBusy, onclick: () => readMenu(false) }),
+        h("button", { textContent: "Options for a certain file", disabled: menuBusy, onclick: () => readMenu(true) }),
+        menuBusy ? h("span", { className: "dim", textContent: "Reading the menu..." }) : null),
+      S.apps.map((a, i) => h("div", { className: "slice" },
+        h("input", { type: "text", value: a.label, "aria-label": "Slice name", style: "width:150px", onchange: e => change(() => a.label = e.target.value, false) }),
+        h("span", { className: "grow dim", textContent: a.title, title: a.title }),
+        h("input", { type: "text", value: a.types, "aria-label": "File types", style: "width:110px", onchange: e => change(() => a.types = e.target.value, false) }),
+        h("button", { textContent: "Remove", onclick: () => change(() => S.apps.splice(i, 1)) })))),
+    menu ? h("div", { className: "card" },
+      h("p", { className: "dim", textContent: "Found for " + menu.file }),
+      menu.entries.length ? menu.entries.map(f => h("div", { className: "slice" },
+        h("span", { className: "grow", textContent: f.title }),
+        h("button", { textContent: added(f.title) ? "Added" : "Add", disabled: added(f.title), onclick: () => add(f) })))
+        : h("p", { textContent: "No other apps add options for this kind of file." })) : null,
+  ];
+}
+
 function mine() {
   const field = (action, key, label, hint, extra) => [
     h("label", { textContent: label }),
@@ -245,7 +283,10 @@ function mine() {
       extra || null),
   ];
   return [
-    head("My actions", "Add your own slices. They show up under Mine for the file types you list."),
+    head("My actions", "Borrow another app's right-click option, or start a program yourself."),
+    rightClick(),
+    h("h2", { textContent: "Start a program" }),
+    h("p", { className: "dim", textContent: "These show up under Mine for the file types you list." }),
     h("div", { className: "card" },
       h("div", { className: "row" },
         h("button", { className: "primary", textContent: "New action", onclick: () => change(() => S.custom.push({ name: "", program: "", args: "{file}", types: "*" })) }),

@@ -6,7 +6,7 @@
 use crate::archive;
 use crate::config::{self, Settings};
 use crate::convert::{self, ImgTarget};
-use crate::{custom, journal, transfer};
+use crate::{custom, journal, shellmenu, transfer};
 use crate::sys;
 use crate::office::{self, Out};
 use crate::ooxml;
@@ -35,6 +35,8 @@ pub struct Node {
     pub id: String,
     /// Takes more than a moment (Office, ffmpeg), so the UI shows a working toast.
     pub slow: bool,
+    /// Another app's right-click entry.
+    pub app: bool,
 }
 
 fn leaf(
@@ -42,11 +44,11 @@ fn leaf(
     tip: &str,
     f: impl Fn(&Path) -> Result<String, String> + Send + Sync + 'static,
 ) -> Node {
-    Node { label: label.into(), tip: tip.into(), kind: Kind::Run(Arc::new(f)), id: String::new(), slow: false }
+    Node { label: label.into(), tip: tip.into(), kind: Kind::Run(Arc::new(f)), id: String::new(), slow: false, app: false }
 }
 
 fn group(label: &str, tip: &str, children: Vec<Node>) -> Node {
-    Node { label: label.into(), tip: tip.into(), kind: Kind::Group(children), id: String::new(), slow: false }
+    Node { label: label.into(), tip: tip.into(), kind: Kind::Group(children), id: String::new(), slow: false, app: false }
 }
 
 fn slow(mut n: Node) -> Node {
@@ -86,6 +88,10 @@ pub fn wheel_with(paths: &[PathBuf], settings: &Settings) -> (String, String, Ve
         let at = more_position(&nodes);
         nodes.insert(at, send_group(paths, settings));
     }
+    for node in app_nodes(paths, settings) {
+        let at = more_position(&nodes);
+        nodes.insert(at, node);
+    }
     if let Some(mine) = custom_group(paths, settings) {
         let at = more_position(&nodes);
         nodes.insert(at, mine);
@@ -104,6 +110,7 @@ pub fn wheel_with(paths: &[PathBuf], settings: &Settings) -> (String, String, Ve
                     kind: Kind::Run(runner),
                     id,
                     slow: is_slow,
+                    app: false,
                 },
             );
         }
@@ -240,6 +247,23 @@ fn send_group(paths: &[PathBuf], settings: &Settings) -> Node {
             }),
         ],
     )
+}
+
+/// Other apps' right-click entries, one slice each so they're a single pick away.
+fn app_nodes(paths: &[PathBuf], settings: &Settings) -> Vec<Node> {
+    let shared = Arc::new(paths.to_vec());
+    settings
+        .apps
+        .iter()
+        .filter(|a| !a.title.is_empty() && paths.iter().all(|p| custom::type_matches(&a.types, p)))
+        .take(4)
+        .map(|a| {
+            let (action, paths) = (a.clone(), shared.clone());
+            let mut node = leaf(&short(&a.label), &a.title, move |_| shellmenu::launch(&action, &paths));
+            node.app = true;
+            node
+        })
+        .collect()
 }
 
 fn custom_group(paths: &[PathBuf], settings: &Settings) -> Option<Node> {

@@ -5,9 +5,9 @@
 #
 # The identity values are on the app's "Product identity" page in Partner Center.
 param(
-    [string]$Name = "RadialActions.Dev",
-    [string]$Publisher = "CN=RadialActionsDev",
-    [string]$PublisherDisplay = "RadialActions",
+    [string]$Name = "Starmarine06.RadialActions",
+    [string]$Publisher = "CN=062E474A-3779-4DE6-95FB-7030E994447E",
+    [string]$PublisherDisplay = "Starmarine06",
     [string]$DisplayName = "RadialActions"
 )
 $ErrorActionPreference = "Stop"

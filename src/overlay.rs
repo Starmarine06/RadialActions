@@ -40,6 +40,7 @@ struct Entry {
     /// Identifies the action in the usage history.
     id: String,
     slow: bool,
+    app: bool,
 }
 
 struct Wheel {
@@ -245,7 +246,7 @@ impl View {
         self.slices = entries
             .iter()
             .map(|e| gfx::Slice {
-                icon: self.icons.mask(&icon_for(&e.label, &e.id).to_string()),
+                icon: self.icons.mask(&if e.app { '\u{E71D}' } else { icon_for(&e.label, &e.id) }.to_string()),
                 label: self.text.fit(&e.label, (72.0 * self.scale) as i32),
             })
             .collect();
@@ -296,6 +297,7 @@ fn entries_of(nodes: &[Node]) -> Vec<Entry> {
             },
             id: n.id.clone(),
             slow: n.slow,
+            app: n.app,
         })
         .collect()
 }

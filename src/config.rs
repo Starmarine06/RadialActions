@@ -32,6 +32,22 @@ pub struct Settings {
     pub wheels: BTreeMap<String, Layout>,
     /// The user's own actions.
     pub custom: Vec<Custom>,
+    /// Other apps' right-click entries shown on the wheel.
+    pub apps: Vec<AppAction>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct AppAction {
+    /// What the slice says.
+    pub label: String,
+    /// The menu entry's own text.
+    pub title: String,
+    /// "app" (Windows 11 handler) or "classic".
+    pub source: String,
+    pub clsid: String,
+    /// "*", "folder", or extensions such as "png, jpg".
+    pub types: String,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -68,6 +84,7 @@ impl Default for Settings {
             recent_folders: Vec::new(),
             wheels: BTreeMap::new(),
             custom: Vec::new(),
+            apps: Vec::new(),
         }
     }
 }

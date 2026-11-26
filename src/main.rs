@@ -19,6 +19,7 @@ mod pdfword;
 mod pptx;
 mod recent;
 mod rename;
+mod shellmenu;
 mod sys;
 mod target;
 mod textconv;
@@ -69,6 +70,11 @@ fn main() {
         None => run_app(true),
         Some("--background") => run_app(false),
         Some("--ui") => ui::run(&args[1..]),
+        Some("--menu-run") => {
+            if let Some(job) = args.get(1) {
+                shellmenu::run_job(std::path::Path::new(job));
+            }
+        }
         Some(command) => {
             // A windowless program has to borrow the caller's console to print.
             unsafe {
@@ -136,6 +142,14 @@ fn cli(command: &str, rest: &[String]) {
             report(result);
         }
         "--undo" => report(journal::undo()),
+        // `--menu <file>` lists other apps' right-click entries for it.
+        "--menu" => {
+            let Some(file) = files(0).into_iter().next() else { return println!("usage: --menu <file>") };
+            report(shellmenu::available(&file).map(|found| {
+                found.iter().map(|f| format!("{:8} {}  {}", f.source, f.title, f.app)).collect::<Vec<_>>().join("
+")
+            }));
+        }
         // `--autostart on|off|status` manages the start-with-Windows entry.
         "--autostart" => {
             let result = match rest.first().map(String::as_str) {

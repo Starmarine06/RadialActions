@@ -191,6 +191,20 @@ fn handle(command: &str, args: &Value, files: &[PathBuf]) -> Result<Value, Strin
         }
         "pickFolder" => Ok(transfer::pick_folder()?.map(|p| Value::from(p.display().to_string())).unwrap_or(Value::Null)),
         "pickProgram" => Ok(pick_program()?.map(Value::from).unwrap_or(Value::Null)),
+        // Other apps' right-click entries for a file: the one picked, or a plain sample.
+        "menuEntries" => {
+            let file = if args.as_bool().unwrap_or(false) {
+                let Some(path) = pick_program()? else { return Ok(Value::Null) };
+                PathBuf::from(path)
+            } else {
+                let sample = std::env::temp_dir().join("RadialActions sample.txt");
+                std::fs::write(&sample, "sample").map_err(|e| e.to_string())?;
+                sample
+            };
+            let found = crate::shellmenu::available(&file)?;
+            let name = file.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            Ok(json!({"file": name, "entries": found}))
+        }
         "practice" => practice_folder().map(|_| Value::Null),
         "undo" => journal::undo().map(Value::from),
         "open" => open_external(args.as_str().unwrap_or("")).map(|_| Value::Null),
@@ -215,7 +229,7 @@ fn pick_program() -> Result<Option<String>, String> {
     unsafe {
         let dialog: IFileOpenDialog =
             CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER).map_err(|e| e.to_string())?;
-        let _ = dialog.SetTitle(w!("Choose a program"));
+        let _ = dialog.SetTitle(w!("Choose a file"));
         if dialog.Show(None).is_err() {
             return Ok(None);
         }

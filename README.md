@@ -21,6 +21,7 @@ Click the tray icon for settings.
 
 - **Look**: follow Windows (light or dark, your accent colour), or go neon.
 - **Wheel**: reorder, pin or hide slices for each kind of file. The star slice is the action you use most.
+- **Right-click options**: put another app's menu entry on the wheel, such as sending with Blip or resizing with PowerToys.
 - **My actions**: add slices that start your own program with the file.
 - **Trigger**: Shift, Ctrl, Alt or Ctrl+Shift, click or flick-and-release, adjustable delay. It stays quiet while a game or presentation is full screen.
 

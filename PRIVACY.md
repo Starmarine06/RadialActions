@@ -13,7 +13,7 @@ RadialActions does not collect, transmit, sell or share any personal data. It ha
 
 - Some conversions use programs already on your PC (Microsoft Edge, Microsoft Office or LibreOffice). Those run locally under their own settings and policies.
 - The settings windows use the Microsoft Edge WebView2 Runtime to draw bundled pages. They load nothing from the internet.
-- Actions you add yourself start the program you choose, which may do whatever that program does.
+- Actions you add yourself, including other apps' right-click entries, hand the file to that app, which may do whatever it does (a sharing app will send it where you tell it to).
 - The links on the About page open in your browser.
 
 **Removing your data**

@@ -1,6 +1,6 @@
 ; Builds dist\RadialActions-Setup-<version>.exe from target\release\radialactions.exe
 #define AppName "RadialActions"
-#define AppVersion "1.1.0"
+#define AppVersion "1.2.0"
 #define AppExe "radialactions.exe"
 
 [Setup]

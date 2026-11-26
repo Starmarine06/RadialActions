@@ -13,7 +13,7 @@ Turn a photo into a PNG or shrink it to half size. Make an editable Word file fr
 
 Send moves or copies files to your favourite folders, and renames a whole batch with a preview of every new name. Changed your mind? Undo is right there in the pop-up.
 
-You decide how it looks and behaves. Match Windows in light or dark with your accent colour, or switch to neon. Pin, hide and reorder slices for each kind of file. Add your own slices that open a file in whatever program you like. Pick Shift, Ctrl or Alt as the trigger. It keeps quiet while a game or presentation is full screen.
+You decide how it looks and behaves. Match Windows in light or dark with your accent colour, or switch to neon. Pin, hide and reorder slices for each kind of file. Put other apps' right-click options on the wheel, so sending a file to your phone is one flick. Add your own slices that open a file in whatever program you like. Pick Shift, Ctrl or Alt as the trigger. It keeps quiet while a game or presentation is full screen.
 
 Everything happens on your PC. No account, no ads, nothing uploaded. Free and open source.
 
@@ -33,6 +33,7 @@ First release on the Microsoft Store. A new look with light, dark and neon theme
 - Move, copy and bulk rename
 - Undo for the last action
 - Light, dark and neon themes
+- Other apps' right-click options as slices
 - Your own actions
 - Works offline
 
